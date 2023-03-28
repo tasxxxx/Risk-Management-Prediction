@@ -1,0 +1,352 @@
+---
+title: "BT2103 Group Project RMarkdown"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r load libraries and read data, echo = TRUE}
+
+library(tidyverse)
+library("dplyr")
+library("tidyr")
+library("knitr")
+library("corrplot")
+library(ggplot2)
+library(hrbrthemes)
+library(e1071)
+library(randomForest)
+library(pROC)
+library(ROCR)
+library(CustomerScoringMetrics)
+library(ROCit)
+library(InformationValue)
+library(rpart)
+library(broom)
+library(gains)
+
+
+data <- read.table("card.csv",sep=",",skip=2,header=FALSE)
+vars <- c("ID", "LIMIT_BAL", "SEX", "EDUCATION", "MARRIAGE", "AGE", 
+                 "PAYSTATUS_SEPT", "PAYSTATUS_AUG", "PAYSTATUS_JULY", "PAYSTATUS_JUNE", "PAYSTATUS_MAY", "PAYSTATUS_APR",
+                 "BILL_SEPT", "BILL_AUG", "BILL_JULY", "BILL_JUNE", "BILL_MAY", "BILL_APR",
+                 "PREV_SEPT", "PREV_AUG", "PREV_JULY", "PREV_JUNE", "PREV_MAY", "PREV_APR", 
+                 "DEFAULT")
+names(data) <- vars
+
+str(data)
+```
+
+
+```{r exploratory analysis, echo = TRUE}
+
+#EDUCATION
+eduFreq <- data %>%
+  group_by(EDUCATION) %>%
+  summarise(n= n())
+kable(eduFreq)
+# those encoded 0, 5 and 6 are unknowns
+
+#EDUCATION: level of education, categorical variable (1=graduate school, 2=university, 3=high school, 4=others, 5=unknown, 6=unknown)
+#will combine all the unknowns into the 'others' column
+target <- ifelse(data$EDUCATION == 5, 4, ifelse(data$EDUCATION == 6, 4, ifelse(data$EDUCATION == 0, 4,
+          ifelse(data$EDUCATION == 4, 4, ifelse(data$EDUCATION == 1, 1, ifelse(data$EDUCATION == 2,2,3))))))
+data['EDUCATION'] <- target
+
+newEduFreq <- data %>%
+  group_by(EDUCATION) %>%
+  summarise(n= n())
+kable(newEduFreq)
+
+
+#MARRIAGE: Marital status, categorical variable (1=married, 2=single, 3=others)
+#will combine the unknown into the others column as well
+marrFreq <- data %>%
+   group_by(MARRIAGE) %>%
+   summarise(n = n())
+kable(marrFreq)
+
+
+target2 <- ifelse(data$MARRIAGE == 0, 3, ifelse(data$MARRIAGE == 3, 3, ifelse(data$MARRIAGE == 1, 1, 2)))
+data['MARRIAGE'] <- target2
+
+newMarrFreq <- data %>%
+   group_by(MARRIAGE) %>%
+   summarise(n = n())
+kable(newMarrFreq)
+
+#check for duplicates
+sum(duplicated(data))
+
+#check for NA values
+sapply(data, anyNA)
+
+
+#HISTOGRAMS FOR BILL AND PREV PAYMENTS
+
+bill.amt.1.hist <- hist(data$BILL_SEPT, ylim = c(0, 25000), main = "Histogram of BILL_SEPT", xlab = "BILL_SEPT")
+
+bill.amt.2.hist <- hist(data$BILL_AUG, ylim = c(0, 25000), main = "Histogram of BILL_AUG", xlab = "BILL_AUG")
+
+bill.amt.3.hist <- hist(data$BILL_JULY, ylim = c(0, 25000), main = "Histogram of BILL_JULY", xlab = "BILL_JULY")
+
+bill.amt.4.hist <- hist(data$BILL_JUNE, ylim = c(0, 25000), main = "Histogram of BILL_JUNE", xlab = "BILL_JUNE")
+
+bill.amt.5.hist <- hist(data$BILL_MAY, ylim = c(0, 25000), main = "Histogram of BILL_MAY", xlab = "BILL_MAY")
+
+bill.amt.6.hist <- hist(data$BILL_APR, ylim = c(0, 25000), main = "Histogram of BILL_APR", xlab = "BILL_APR")
+
+pay.amt.1.hist <- hist(data$PREV_SEPT, ylim = c(0, 35000), main = "Histogram of PREV_SEPT", xlab = "PREV_SEPT")
+
+pay.amt.2.hist <- hist(data$PREV_AUG, ylim = c(0, 35000), main = "Histogram of PREV_AUG", xlab = "PREV_AUG")
+
+pay.amt.3.hist <- hist(data$PREV_JULY, ylim = c(0, 35000), main = "Histogram of PREV_JULY", xlab = "PREV_JULY")
+
+pay.amt.4.hist <- hist(data$PREV_JUNE, ylim = c(0, 35000), main = "Histogram of PREV_JUNE", xlab = "PREV_JUNE")
+
+pay.amt.5.hist <- hist(data$PREV_MAY, ylim = c(0, 35000), main = "Histogram of PREV_MAY", xlab = "PREV_MAY")
+
+pay.amt.6.hist <- hist(data$PREV_APR, ylim = c(0, 35000), main = "Histogram of PREV_APR", xlab = "PREV_APR")
+
+pay.0.counts <- table(data$PAYSTATUS_SEPT)
+pay.0.barchart <- barplot(pay.0.counts, xlab = "Payment Status September", ylab = "Frequency", main = "Barchart of Pay Status September", ylim = c(0, 20000))
+
+
+pay.2.counts <- table(data$PAYSTATUS_AUG)
+pay.2.barchart <- barplot(pay.2.counts, xlab = "Pay Status August", ylab = "Frequency", main = "Barchart of Pay Status August", ylim = c(0, 20000))
+text(x = pay.2.barchart, y = pay.2.counts, label = pay.2.counts, pos = 3)
+
+pay.3.counts <- table(data$PAYSTATUS_JULY)
+pay.3.barchart <- barplot(pay.3.counts, xlab = "Pay Status July", ylab = "Frequency", main = "Barchart of Pay Status July", ylim = c(0, 20000))
+text(x = pay.3.barchart, y = pay.3.counts, label = pay.3.counts, pos = 3)
+
+pay.4.counts <- table(data$PAYSTATUS_JUNE)
+pay.4.barchart <- barplot(pay.4.counts, xlab = "Pay_4 Status June", ylab = "Frequency", main = "Barchart of Pay Status June", ylim = c(0, 20000))
+text(x = pay.4.barchart, y = pay.4.counts, label = pay.4.counts, pos = 3)
+
+pay.5.counts <- table(data$PAYSTATUS_MAY)
+pay.5.barchart <- barplot(pay.5.counts, xlab = "Pay Status May", ylab = "Frequency", main = "Barchart of Pay Status May", ylim = c(0, 20000))
+text(x = pay.5.barchart, y = pay.5.counts, label = pay.5.counts, pos = 3)
+
+pay.6.counts <- table(data$PAYSTATUS_APR)
+pay.6.barchart <- barplot(pay.6.counts, xlab = "Pay_6 Status April", ylab = "Frequency", main = "Barchart of Pay Status April", ylim = c(0, 20000))
+text(x = pay.6.barchart, y = pay.6.counts, label = pay.6.counts, pos = 3)
+
+#barchart of default vs non default
+default.counts <- table(data$DEFAULT)
+default.barchart <- barplot(default.counts, xlab = "Default Status", ylab = "Frequency", main = "Barchart of Defaulter Status", ylim = c(0, 30000))
+text(x = default.barchart, y = default.counts, label = default.counts, pos = 3)
+
+
+#correlation
+corr <- cor(data[, -c(1, 3, 4, 5, 7, 8, 9, 10, 11, 12, 25)])
+corrplot(corr, method = "number", type = "lower", number.cex = 0.7, tl.cex = 0.5)
+
+#GRAPH OF LIMIT BALANCE AND THE CORRESPONDING DEFAULTS IN EACH BREAK
+default.vs.creditlimit <- data %>%
+  ggplot( aes(x=LIMIT_BAL, fill=as.factor(DEFAULT), colour = DEFAULT)) +
+    geom_histogram( color="#e9ecef", alpha=0.6, position = 'identity', bins = 50) +
+    scale_color_discrete(labels = c("No default", "Default")) +
+    scale_fill_discrete(labels = c("No default", "Default")) +
+    
+    labs(fill="")
+default.vs.creditlimit
+
+#GRAPH OF EDUCATION AND THE CORRESPONDING DEFAULTS IN EACH GROUP
+df <- data[, c(4,25)] %>% count(EDUCATION, DEFAULT)
+default.vs.education <- ggplot(data=df, aes(x=EDUCATION, y=n, fill=DEFAULT)) + geom_bar(stat="identity", position=position_dodge())
+default.vs.education
+
+#GRAPH OF AGE AND THE CORRESPONDING DEFAULTS
+default.vs.age <- data %>%
+  ggplot( aes(x=AGE, fill=as.factor(DEFAULT), colour = DEFAULT)) +
+    geom_histogram( color="#e9ecef", alpha=0.6, position = 'identity', bins = 50) +
+    scale_color_discrete(labels = c("No default", "Default")) +
+    scale_fill_discrete(labels = c("No default", "Default")) +
+    labs(fill="")
+default.vs.age
+
+```
+
+```{r data pre processing}
+
+data$SEX <- as.factor(data$SEX)
+data$EDUCATION <- as.factor(data$EDUCATION)
+data$MARRIAGE <- as.factor(data$MARRIAGE)
+data$PAYSTATUS_SEPT <- as.factor(data$PAYSTATUS_SEPT)
+data$PAYSTATUS_AUG <- as.factor(data$PAYSTATUS_AUG)
+data$PAYSTATUS_JULY <- as.factor(data$PAYSTATUS_JULY)
+data$PAYSTATUS_JUNE <- as.factor(data$PAYSTATUS_JUNE)
+data$PAYSTATUS_MAY <- as.factor(data$PAYSTATUS_MAY)
+data$PAYSTATUS_APR <- as.factor(data$PAYSTATUS_APR)
+data$DEFAULT <- as.factor(data$DEFAULT)
+
+
+```
+
+```{r split, echo = TRUE}
+
+
+#break data into train and test set
+
+set.seed(1234)
+n = length(data$ID)
+index <- 1:nrow(data)
+testindex <- sample(index, trunc(n)/4)
+test.data <- data[testindex,]
+train.data <- data[-testindex,]
+test.class <- as.factor(test.data$DEFAULT)
+train.class <- as.factor(train.data$DEFAULT)
+
+
+#to handle imbalanced data issue
+#library(smotefamily)
+#train.smote <- SMOTE(train.data[,-25], train.data$DEFAULT, K = 5, dup_size = 1)
+#train.smote <- train.smote$data # extract only the balanced dataset
+#train.smote.class <- as.factor(train.smote$class) #note that default has been renamed to class
+#names(train.smote)[25] <- 'DEFAULT'
+
+
+```
+
+
+
+```{r feature selection, echo = TRUE}
+#manual backward regression; decide which to remove based on p value
+fullmodel <- glm(train.class ~ SEX + EDUCATION + MARRIAGE + LIMIT_BAL + AGE +
+                  PAYSTATUS_SEPT + PAYSTATUS_AUG + PAYSTATUS_JULY + PAYSTATUS_JUNE + PAYSTATUS_MAY + PAYSTATUS_APR +
+                  BILL_SEPT + BILL_AUG + BILL_JULY + BILL_JUNE + BILL_MAY + BILL_APR +
+                  PREV_SEPT + PREV_AUG +  PREV_JUNE + PREV_MAY + PREV_APR + PREV_JULY,
+                  data=train.data[-25], family="binomial")
+summary(fullmodel)
+
+fullmodel.df <- tidy(fullmodel)
+fullmodel.df[order(fullmodel.df$p.value, decreasing = FALSE), ]
+
+rf1 <- randomForest(train.class ~ ., data = train.data[, -c(1,25)], importance = TRUE, doTrace = TRUE)
+rf1
+rf1.imp <- as.data.frame(importance(rf1))
+rf1.imp[order(rf1.imp$"1", decreasing = TRUE),]
+```
+
+```{r svm, echo = TRUE}
+
+svm.model <- svm(train.class ~  PAYSTATUS_SEPT + LIMIT_BAL + PREV_AUG + SEX + PAYSTATUS_APR + PREV_APR + PAYSTATUS_MAY + PAYSTATUS_JUNE,
+                  data=train.data[-25], type = "C-classification", kernel = "linear")
+
+results.train <- predict(svm.model, train.data[-25])
+results.test <- predict(svm.model, test.data[-25])
+
+table(pred = results.train, actual = train.data$DEFAULT) #cf matrix for train
+table(pred = results.test, actual = test.data$DEFAULT) #cf matrix for test
+
+#average class accuracy of train
+avg.acc.train.svm <- 1/2 * (16845/(16845+687) + 1639/(1639+3329))*100
+avg.acc.train.svm
+
+#average class accuracy of test
+avg.acc.test.svm <- 1/2 * (5574/(5574+258) + 528/(1140+528))*100
+avg.acc.test.svm
+
+#plot roc for train
+roc.svm.train <- roc(response = train.class, predictor = as.numeric(results.train))
+plot(roc.svm.train, print.auc = TRUE, legacy.axes = TRUE, main = "ROC Curve: SVM (train)")
+
+#plot roc for test
+roc.svm.test <- roc(response = as.numeric(test.class), predictor = as.numeric(results.test))
+plot(roc.svm.test, print.auc = TRUE, legacy.axes = TRUE, main = "ROC Curve: SVM (test)")
+
+#gain chart for train 
+cumGainsChart(as.numeric(results.train), train.class, resolution = 1/10)
+#gain chart for test
+cumGainsChart(as.numeric(results.test), test.class, resolution = 1/10)
+
+#lift chart for train
+liftChart(as.numeric(results.train), train.class, resolution = 1/10)
+#lift chart for test
+liftChart(as.numeric(results.test), test.class, resolution = 1/10)
+
+```
+
+```{r logistic regression, echo = TRUE}
+
+logisticmodel <- glm(train.class ~ PAYSTATUS_SEPT + LIMIT_BAL + PREV_AUG + SEX + PAYSTATUS_APR + PREV_APR + PAYSTATUS_MAY + PAYSTATUS_JUNE,
+                  data=train.data[-25], family="binomial")
+summary(logisticmodel)
+
+pred.train.logistic <- predict(logisticmodel, data = train.data[-25], type = "response") 
+
+pred.test.logistic <- predict(logisticmodel, newdata = test.data[-25], type = "response")
+
+
+optcutoff.logistic <- optimalCutoff(train.class, pred.train.logistic,optimiseFor = "misclasserror")  #OPTIMAL CUTOFF VALUE
+train.logistic.predclass <- ifelse(pred.train.logistic < optcutoff.logistic, 0, 1)   
+test.logistic.predclass <- ifelse(pred.test.logistic < optcutoff.logistic, 0, 1)
+
+#average class accuracy for train
+table(train.class, train.logistic.predclass)
+avg.acc.train.logistic <- 1/2 * (16551/(16551 + 981) + 1963/(1963+3005))*100
+avg.acc.train.logistic
+
+#average class accuracy for test
+table(test.class, test.logistic.predclass)
+avg.acc.test.logistic <- 1/2 * (5457/(5457 + 375) + 646/(646+1022))*100
+avg.acc.test.logistic
+
+#plot roc for train
+roc.logistic.train <- roc(response = train.class, predictor = as.numeric(pred.train.logistic))
+plot(roc.logistic.train, print.auc = TRUE, legacy.axes = TRUE, main = "ROC Curve: GLM (train)")
+
+#plot roc for test
+roc.logistic.test <- roc(response = test.class, predictor = as.numeric(pred.test.logistic))
+plot(roc.logistic.test, print.auc = TRUE, legacy.axes = TRUE, main = "ROC Curve: GLM (test)")
+
+#gain chart for train 
+cumGainsChart(as.numeric(train.logistic.predclass), train.class, resolution = 1/10)
+#gain chart for test
+cumGainsChart(as.numeric(test.logistic.predclass), test.class, resolution = 1/10)
+
+#lift chart for train
+liftChart(as.numeric(train.logistic.predclass), train.class, resolution = 1/10)
+#lift chart for test
+liftChart(as.numeric(test.logistic.predclass), test.class, resolution = 1/10)
+
+
+```
+
+
+
+```{r decision tree, echo = TRUE}
+
+tree_model = rpart(train.class ~ PAYSTATUS_SEPT + LIMIT_BAL + PREV_AUG + SEX + PAYSTATUS_APR + PREV_APR + PAYSTATUS_MAY + PAYSTATUS_JUNE, 
+                   data = train.data[-25], method="class") 
+summary(tree_model)
+
+pred.tree.train <- predict(tree_model, data = train.data[-25], type = "class")
+table(train.class, pred.tree.train)
+
+tree.train.acc <- 1/2 * (16839/(16839+693) + 1644/(1644+3324))*100
+tree.train.acc
+
+#average class accuracy for train
+pred.tree.test <- predict(tree_model, newdata = test.data[-25], type = "class")
+table(test.class,pred.tree.test)
+
+#average class accuracy for test
+tree.test.acc <- 1/2 * (5572/(5572+260) + 533/(1135+533))*100
+tree.test.acc
+
+#gain chart for train 
+cumGainsChart(pred.tree.train, train.class, resolution = 1/10)
+
+cumGainsChart(pred.tree.test, test.class, resolution = 1/10)
+
+#lift chart for train
+liftChart(as.numeric(pred.tree.train), train.class, resolution = 1/10)
+#lift chart for test
+liftChart(as.numeric(pred.tree.test), test.class, resolution = 1/10)
+
+
+
+```
+
+
